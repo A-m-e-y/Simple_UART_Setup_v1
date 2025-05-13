@@ -70,7 +70,9 @@ module uart_tb ();
   // Main Testing:
   initial
     begin
-       
+      // Enable waveform dump
+      $dumpfile("uart_tb.vcd");
+      $dumpvars(0, uart_tb);
       // Tell UART to send a command (exercise Tx)
       @(posedge r_Clock);
       @(posedge r_Clock);
