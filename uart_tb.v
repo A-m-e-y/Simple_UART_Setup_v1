@@ -91,6 +91,8 @@ module uart_tb ();
       else
         $display("Test Failed - Incorrect Byte Received");
        
+      $finish;
+
     end
    
 endmodule
