@@ -1,136 +1,114 @@
-module uart_rx 
-  #(parameter CLKS_PER_BIT)
-  (
-   input        i_Clock,
-   input        i_Rx_Serial,
-   output       o_Rx_DV,
-   output [7:0] o_Rx_Byte
-   );
+
+module uart_rx #(parameter CLKS_PER_BIT = 2813)
+                (input clock,
+                 input i_rx,
+                 output [7:0] o_data_byte,
+                 output o_data_avail);
     
-  parameter s_IDLE         = 3'b000;
-  parameter s_RX_START_BIT = 3'b001;
-  parameter s_RX_DATA_BITS = 3'b010;
-  parameter s_RX_STOP_BIT  = 3'b011;
-  parameter s_CLEANUP      = 3'b100;
-   
-  reg           r_Rx_Data_R = 1'b1;
-  reg           r_Rx_Data   = 1'b1;
-   
-  reg [7:0]     r_Clock_Count = 0;
-  reg [2:0]     r_Bit_Index   = 0; //8 bits total
-  reg [7:0]     r_Rx_Byte     = 0;
-  reg           r_Rx_DV       = 0;
-  reg [2:0]     r_SM_Main     = 0;
-   
-  // Purpose: Double-register the incoming data.
-  // This allows it to be used in the UART RX Clock Domain.
-  // (It removes problems caused by metastability)
-  always @(posedge i_Clock)
+    localparam IDLE_STATE    = 2'b00;
+    localparam START_STATE   = 2'b01;
+    localparam GET_BIT_STATE = 2'b10;
+    localparam STOP_STATE    = 2'b11;
+    
+    reg rx_buffer = 1'b1;
+    reg rx        = 1'b1;
+    
+    reg [1:0] state     = 0;
+    reg [15:0] counter  = 0;
+    reg [2:0] bit_index = 0;
+    reg [7:0] data_byte = 0;
+    reg data_avail      = 0;
+    
+    assign o_data_avail = data_avail;
+    assign o_data_byte  = data_byte;
+    
+    always @(posedge clock)
     begin
-      r_Rx_Data_R <= i_Rx_Serial;
-      r_Rx_Data   <= r_Rx_Data_R;
+        rx_buffer <= i_rx;
+        rx        <= rx_buffer;
     end
-   
-   
-  // Purpose: Control RX state machine
-  always @(posedge i_Clock)
+    
+    always @(posedge clock)
     begin
-       
-      case (r_SM_Main)
-        s_IDLE :
-          begin
-            r_Rx_DV       <= 1'b0;
-            r_Clock_Count <= 0;
-            r_Bit_Index   <= 0;
-             
-            if (r_Rx_Data == 1'b0)          // Start bit detected
-              r_SM_Main <= s_RX_START_BIT;
-            else
-              r_SM_Main <= s_IDLE;
-          end
-         
-        // Check middle of start bit to make sure it's still low
-        s_RX_START_BIT :
-          begin
-            if (r_Clock_Count == (CLKS_PER_BIT-1)/2)
-              begin
-                if (r_Rx_Data == 1'b0)
-                  begin
-                    r_Clock_Count <= 0;  // reset counter, found the middle
-                    r_SM_Main     <= s_RX_DATA_BITS;
-                  end
+        case (state)
+            IDLE_STATE:
+            begin
+                data_avail <= 0;
+                counter    <= 0;
+                bit_index  <= 0;
+                if (rx == 0) // start bit detected
+                    state <= START_STATE;
                 else
-                  r_SM_Main <= s_IDLE;
-              end
-            else
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_RX_START_BIT;
-              end
-          end // case: s_RX_START_BIT
-         
-         
-        // Wait CLKS_PER_BIT-1 clock cycles to sample serial data
-        s_RX_DATA_BITS :
-          begin
-            if (r_Clock_Count < CLKS_PER_BIT-1)
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_RX_DATA_BITS;
-              end
-            else
-              begin
-                r_Clock_Count          <= 0;
-                r_Rx_Byte[r_Bit_Index] <= r_Rx_Data;
-                 
-                // Check if we have received all bits
-                if (r_Bit_Index < 7)
-                  begin
-                    r_Bit_Index <= r_Bit_Index + 1;
-                    r_SM_Main   <= s_RX_DATA_BITS;
-                  end
+                    state <= IDLE_STATE;
+            end
+            
+            START_STATE:
+            begin
+                if (counter == (CLKS_PER_BIT - 1) / 2)
+                begin
+                    if (rx == 0) // still low?
+                    begin
+                        counter <= 0;
+                        state   <= GET_BIT_STATE;
+                    end
+                    else
+                    begin
+                        state <= IDLE_STATE;
+                    end
+                end
                 else
-                  begin
-                    r_Bit_Index <= 0;
-                    r_SM_Main   <= s_RX_STOP_BIT;
-                  end
-              end
-          end // case: s_RX_DATA_BITS
-     
-     
-        // Receive Stop bit.  Stop bit = 1
-        s_RX_STOP_BIT :
-          begin
-            // Wait CLKS_PER_BIT-1 clock cycles for Stop bit to finish
-            if (r_Clock_Count < CLKS_PER_BIT-1)
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_RX_STOP_BIT;
-              end
-            else
-              begin
-                r_Rx_DV       <= 1'b1;
-                r_Clock_Count <= 0;
-                r_SM_Main     <= s_CLEANUP;
-              end
-          end // case: s_RX_STOP_BIT
-     
-         
-        // Stay here 1 clock
-        s_CLEANUP :
-          begin
-            r_SM_Main <= s_IDLE;
-            r_Rx_DV   <= 1'b0;
-          end
-         
-         
-        default :
-          r_SM_Main <= s_IDLE;
-         
-      endcase
-    end   
-   
-  assign o_Rx_DV   = r_Rx_DV;
-  assign o_Rx_Byte = r_Rx_Byte;
-   
-endmodule // uart_rx
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= START_STATE;
+                end
+            end
+            
+            GET_BIT_STATE:
+            begin
+                if (counter < CLKS_PER_BIT - 1)
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= GET_BIT_STATE;
+                end
+                else
+                begin
+                    counter              <= 0;
+                    data_byte[bit_index] <= rx;
+                    if (bit_index < 7)
+                    begin
+                        bit_index <= bit_index + 3'b1;
+                        state     <= GET_BIT_STATE;
+                    end
+                    else
+                    begin
+                        bit_index <= 0;
+                        state     <= STOP_STATE;
+                    end
+                end
+            end
+            
+            STOP_STATE:
+            begin
+                if (counter < CLKS_PER_BIT - 1)
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= STOP_STATE;
+                end
+                else
+                begin
+                    data_avail <= 1;
+                    counter    <= 0;
+                    state      <= IDLE_STATE;
+                end
+            end
+            
+            default:
+            state <= IDLE_STATE;
+            
+            
+            
+            
+        endcase
+    end
+    
+endmodule

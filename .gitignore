@@ -1,6 +1,10 @@
 # Prerequisites
 *.d
 
+# Amey
+UART_FPGA_project_1/
+filter/
+assets/
 # Object files
 *.o
 *.ko

@@ -1,133 +1,111 @@
-module uart_tx 
-  #(parameter CLKS_PER_BIT)
-  (
-   input       i_Clock,
-   input       i_Tx_DV,
-   input [7:0] i_Tx_Byte, 
-   output      o_Tx_Active,
-   output reg  o_Tx_Serial,
-   output      o_Tx_Done
-   );
-  
-  parameter s_IDLE         = 3'b000;
-  parameter s_TX_START_BIT = 3'b001;
-  parameter s_TX_DATA_BITS = 3'b010;
-  parameter s_TX_STOP_BIT  = 3'b011;
-  parameter s_CLEANUP      = 3'b100;
-   
-  reg [2:0]    r_SM_Main     = 0;
-  reg [7:0]    r_Clock_Count = 0;
-  reg [2:0]    r_Bit_Index   = 0;
-  reg [7:0]    r_Tx_Data     = 0;
-  reg          r_Tx_Done     = 0;
-  reg          r_Tx_Active   = 0;
-     
-  always @(posedge i_Clock)
+
+
+module uart_tx #(parameter CLKS_PER_BIT = 2813)
+                (input clock,
+                 input i_data_avail,
+                 input [7:0] i_data_byte,
+                 output reg o_active,
+                 output reg o_tx,
+                 output reg o_done);
+    
+    localparam IDLE_STATE     = 2'b00;
+    localparam START_STATE    = 2'b01;
+    localparam SEND_BIT_STATE = 2'b10;
+    localparam STOP_STATE     = 2'b11;
+    
+    reg [1:0] state     = 0;
+    reg [15:0] counter  = 0;
+    reg [2:0] bit_index = 0;
+    reg [7:0] data_byte = 0;
+	 reg tx;
+	 
+	 
+    
+    always @(posedge clock)
     begin
-       
-      case (r_SM_Main)
-        s_IDLE :
-          begin
-            o_Tx_Serial   <= 1'b1;         // Drive Line High for Idle
-            r_Tx_Done     <= 1'b0;
-            r_Clock_Count <= 0;
-            r_Bit_Index   <= 0;
-             
-            if (i_Tx_DV == 1'b1)
-              begin
-                r_Tx_Active <= 1'b1;
-                r_Tx_Data   <= i_Tx_Byte;
-                r_SM_Main   <= s_TX_START_BIT;
-              end
-            else
-              r_SM_Main <= s_IDLE;
-          end // case: s_IDLE
-         
-         
-        // Send out Start Bit. Start bit = 0
-        s_TX_START_BIT :
-          begin
-            o_Tx_Serial <= 1'b0;
-             
-            // Wait CLKS_PER_BIT-1 clock cycles for start bit to finish
-            if (r_Clock_Count < CLKS_PER_BIT-1)
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_TX_START_BIT;
-              end
-            else
-              begin
-                r_Clock_Count <= 0;
-                r_SM_Main     <= s_TX_DATA_BITS;
-              end
-          end // case: s_TX_START_BIT
-         
-         
-        // Wait CLKS_PER_BIT-1 clock cycles for data bits to finish         
-        s_TX_DATA_BITS :
-          begin
-            o_Tx_Serial <= r_Tx_Data[r_Bit_Index];
-             
-            if (r_Clock_Count < CLKS_PER_BIT-1)
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_TX_DATA_BITS;
-              end
-            else
-              begin
-                r_Clock_Count <= 0;
-                 
-                // Check if we have sent out all bits
-                if (r_Bit_Index < 7)
-                  begin
-                    r_Bit_Index <= r_Bit_Index + 1;
-                    r_SM_Main   <= s_TX_DATA_BITS;
-                  end
+        case(state)
+            IDLE_STATE:
+            begin
+                o_tx      <= 1;
+                o_done    <= 0;
+                counter   <= 0;
+                bit_index <= 0;
+                if (i_data_avail == 1)
+                begin
+                    o_active  <= 1;
+                    data_byte <= i_data_byte;
+                    state     <= START_STATE;
+                end
                 else
-                  begin
-                    r_Bit_Index <= 0;
-                    r_SM_Main   <= s_TX_STOP_BIT;
-                  end
-              end
-          end // case: s_TX_DATA_BITS
-         
-         
-        // Send out Stop bit.  Stop bit = 1
-        s_TX_STOP_BIT :
-          begin
-            o_Tx_Serial <= 1'b1;
-             
-            // Wait CLKS_PER_BIT-1 clock cycles for Stop bit to finish
-            if (r_Clock_Count < CLKS_PER_BIT-1)
-              begin
-                r_Clock_Count <= r_Clock_Count + 1;
-                r_SM_Main     <= s_TX_STOP_BIT;
-              end
-            else
-              begin
-                r_Tx_Done     <= 1'b1;
-                r_Clock_Count <= 0;
-                r_SM_Main     <= s_CLEANUP;
-                r_Tx_Active   <= 1'b0;
-              end
-          end // case: s_Tx_STOP_BIT
-         
-         
-        // Stay here 1 clock
-        s_CLEANUP :
-          begin
-            r_Tx_Done <= 1'b1;
-            r_SM_Main <= s_IDLE;
-          end
-         
-         
-        default :
-          r_SM_Main <= s_IDLE;
-         
-      endcase
+                begin
+                    state    <= IDLE_STATE;
+                    o_active <= 0;
+                end
+            end
+            
+            START_STATE:
+            begin
+                o_tx <= 0;
+                if (counter < CLKS_PER_BIT - 1)
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= START_STATE;
+                end
+                else
+                begin
+                    counter <= 0;
+                    state   <= SEND_BIT_STATE;
+                end
+            end
+            
+            SEND_BIT_STATE:
+            begin
+                o_tx <= data_byte[bit_index];
+                if (counter < CLKS_PER_BIT - 1)
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= SEND_BIT_STATE;
+                end
+                else
+                begin
+                    counter <= 0;
+                    if (bit_index < 7)
+                    begin
+                        bit_index <= bit_index + 3'b1;
+                        state     <= SEND_BIT_STATE;
+                    end
+                    else
+                    begin
+                        bit_index <= 0;
+                        state     <= STOP_STATE;
+                    end
+                end
+                
+            end
+            
+            STOP_STATE:
+            begin
+                o_tx <= 1;
+                if (counter < CLKS_PER_BIT - 1)
+                begin
+                    counter <= counter + 16'b1;
+                    state   <= STOP_STATE;
+                end
+                else
+                begin
+                    o_done   <= 1;
+                    state    <= IDLE_STATE;
+                    o_active <= 0;
+                end
+            end
+				
+            default: state <= IDLE_STATE;
+            
+            
+            
+            
+        endcase
     end
- 
-  assign o_Tx_Active = r_Tx_Active;
-  assign o_Tx_Done   = r_Tx_Done;
-   
+    
+    
 endmodule
