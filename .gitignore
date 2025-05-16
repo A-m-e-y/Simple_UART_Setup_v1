@@ -5,6 +5,8 @@
 UART_FPGA_project_1/
 filter/
 assets/
+__pycache__/
+
 # Object files
 *.o
 *.ko

@@ -4,7 +4,7 @@ import time
 
 
 SERIAL_PORT = '/dev/ttyUSB0'  # Replace with your serial port
-BAUD_RATE = 9600
+BAUD_RATE = 115200
 TIMEOUT = 1
 
 # Initialize the serial connection
